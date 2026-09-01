@@ -15,8 +15,8 @@ The installer also creates start, stop, and shell launchers and installs conveni
 
 ## Requirements
 
-- Android with Termux installed
-- The separate Termux:X11 Android application
+- Android with [Termux](https://github.com/termux/termux-app/releases) installed
+- The separate [Termux:X11](https://github.com/termux/termux-x11) Android application
 - An active internet connection
 - Sufficient storage for Debian and GNOME
 
