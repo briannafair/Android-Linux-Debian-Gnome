@@ -22,6 +22,10 @@ The installer also creates start, stop, and shell launchers and installs conveni
 
 ## Installation
 
+```bash
+curl -sL https://raw.githubusercontent.com/briannafair/Android-Linux-Debian-Gnome/refs/heads/main/install-debian-gnome-gpu.sh | bash
+```
+
 Run the installer from Termux:
 
 ```bash
