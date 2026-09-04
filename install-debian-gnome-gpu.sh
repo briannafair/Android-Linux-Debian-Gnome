@@ -447,7 +447,6 @@ DEBIAN_USER="__DEBIAN_USER__"
 STATE_DIR="${TMPDIR}/debian-gnome"
 X11_PID_FILE="${STATE_DIR}/termux-x11.pid"
 X11_LOG="${STATE_DIR}/termux-x11.log"
-X11_SOCKET="${TMPDIR}/.X11-unix/X${DISPLAY_NUM#:}"
 
 echo ""
 echo "Starting Debian GNOME"
@@ -478,33 +477,27 @@ pactl load-module module-native-protocol-tcp \
 export XDG_RUNTIME_DIR="${TMPDIR}"
 export DISPLAY="${DISPLAY_NUM}"
 
-if [ -S "$X11_SOCKET" ]; then
+echo "Starting or connecting to Termux:X11..."
+: > "$X11_LOG"
+termux-x11 "$DISPLAY_NUM" -ac >"$X11_LOG" 2>&1 &
+x11_pid=$!
+echo "$x11_pid" > "$X11_PID_FILE"
+sleep 2
+
+if kill -0 "$x11_pid" 2>/dev/null; then
+    echo "Started Termux:X11 on ${DISPLAY_NUM}."
+elif grep -qi 'server already running' "$X11_LOG"; then
+    # Termux:X11 can listen on an Android abstract socket, so there may be no
+    # $TMPDIR/.X11-unix socket to probe even though the display is available.
     echo "Reusing Termux:X11 on ${DISPLAY_NUM}."
+    rm -f "$X11_PID_FILE"
 else
-    echo "Starting Termux:X11..."
-    : > "$X11_LOG"
-    termux-x11 "$DISPLAY_NUM" -ac >"$X11_LOG" 2>&1 &
-    x11_pid=$!
-    echo "$x11_pid" > "$X11_PID_FILE"
-
-    for ((attempt=0; attempt<20; attempt++)); do
-        if [ -S "$X11_SOCKET" ]; then
-            break
-        fi
-        if ! kill -0 "$x11_pid" 2>/dev/null; then
-            break
-        fi
-        sleep 0.25
-    done
-
-    if [ ! -S "$X11_SOCKET" ]; then
-        echo "ERROR: Termux:X11 did not create display ${DISPLAY_NUM}." >&2
-        if [ -s "$X11_LOG" ]; then
-            tail -n 20 "$X11_LOG" >&2
-        fi
-        rm -f "$X11_PID_FILE"
-        exit 1
+    echo "ERROR: Termux:X11 did not start successfully." >&2
+    if [ -s "$X11_LOG" ]; then
+        tail -n 20 "$X11_LOG" >&2
     fi
+    rm -f "$X11_PID_FILE"
+    exit 1
 fi
 
 # Open/focus the Termux:X11 Android activity when `am` is available.
