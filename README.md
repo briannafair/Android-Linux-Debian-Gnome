@@ -23,10 +23,10 @@ The installer also creates start, stop, and shell launchers and installs conveni
 ## Installation
 
 ```bash
-curl -sL https://raw.githubusercontent.com/briannafair/Android-Linux-Debian-Gnome/refs/heads/main/install-debian-gnome-gpu.sh | bash
+curl -fLO https://raw.githubusercontent.com/briannafair/Android-Linux-Debian-Gnome/refs/heads/main/install-debian-gnome-gpu.sh
 ```
 
-Run the installer from Termux:
+Then run the installer from Termux:
 
 ```bash
 chmod +x install-debian-gnome-gpu.sh
