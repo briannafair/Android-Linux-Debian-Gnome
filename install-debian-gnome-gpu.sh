@@ -455,11 +455,13 @@ echo ""
 mkdir -p "$STATE_DIR"
 chmod 700 "$STATE_DIR"
 
-# Clean up the previous GNOME session. Keep an existing Termux:X11 server so
-# reopening the desktop does not race or conflict with display :0.
+# Clean up the previous desktop and X server. Termux:X11 must be launched from
+# this Termux environment so PRoot can access its display through --shared-tmp.
 echo "Cleaning up previous desktop session..."
 pkill -f 'gnome-shell' 2>/dev/null || true
 pkill -f 'gnome-session' 2>/dev/null || true
+pkill termux-x11 2>/dev/null || true
+rm -f "$X11_PID_FILE"
 sleep 1
 
 # PulseAudio remains on the Termux side; Debian connects over localhost.
@@ -477,20 +479,15 @@ pactl load-module module-native-protocol-tcp \
 export XDG_RUNTIME_DIR="${TMPDIR}"
 export DISPLAY="${DISPLAY_NUM}"
 
-echo "Starting or connecting to Termux:X11..."
+echo "Starting Termux:X11..."
 : > "$X11_LOG"
 termux-x11 "$DISPLAY_NUM" -ac >"$X11_LOG" 2>&1 &
 x11_pid=$!
 echo "$x11_pid" > "$X11_PID_FILE"
-sleep 2
+sleep 3
 
 if kill -0 "$x11_pid" 2>/dev/null; then
     echo "Started Termux:X11 on ${DISPLAY_NUM}."
-elif grep -qi 'server already running' "$X11_LOG"; then
-    # Termux:X11 can listen on an Android abstract socket, so there may be no
-    # $TMPDIR/.X11-unix socket to probe even though the display is available.
-    echo "Reusing Termux:X11 on ${DISPLAY_NUM}."
-    rm -f "$X11_PID_FILE"
 else
     echo "ERROR: Termux:X11 did not start successfully." >&2
     if [ -s "$X11_LOG" ]; then
@@ -607,15 +604,8 @@ X11_PID_FILE="${STATE_DIR}/termux-x11.pid"
 echo "Stopping Debian GNOME."
 pkill -f 'gnome-shell' 2>/dev/null || true
 pkill -f 'gnome-session' 2>/dev/null || true
-if [ -r "$X11_PID_FILE" ]; then
-    read -r x11_pid < "$X11_PID_FILE"
-    if kill -0 "$x11_pid" 2>/dev/null \
-        && [ -r "/proc/${x11_pid}/cmdline" ] \
-        && tr '\0' ' ' < "/proc/${x11_pid}/cmdline" | grep -q 'termux-x11'; then
-        kill "$x11_pid" 2>/dev/null || true
-    fi
-    rm -f "$X11_PID_FILE"
-fi
+pkill termux-x11 2>/dev/null || true
+rm -f "$X11_PID_FILE"
 pulseaudio --kill 2>/dev/null || true
 echo "Desktop stopped."
 STOPEOF
