@@ -446,6 +446,8 @@ DISPLAY_NUM=":0"
 DEBIAN_USER="__DEBIAN_USER__"
 STATE_DIR="${TMPDIR}/debian-gnome"
 X11_PID_FILE="${STATE_DIR}/termux-x11.pid"
+X11_LOG="${STATE_DIR}/termux-x11.log"
+X11_SOCKET="${TMPDIR}/.X11-unix/X${DISPLAY_NUM#:}"
 
 echo ""
 echo "Starting Debian GNOME"
@@ -454,18 +456,11 @@ echo ""
 mkdir -p "$STATE_DIR"
 chmod 700 "$STATE_DIR"
 
-# Clean up a previous desktop session without killing every dbus process on Android.
+# Clean up the previous GNOME session. Keep an existing Termux:X11 server so
+# reopening the desktop does not race or conflict with display :0.
 echo "Cleaning up previous desktop session..."
 pkill -f 'gnome-shell' 2>/dev/null || true
 pkill -f 'gnome-session' 2>/dev/null || true
-if [ -r "$X11_PID_FILE" ]; then
-    read -r previous_x11_pid < "$X11_PID_FILE"
-    if kill -0 "$previous_x11_pid" 2>/dev/null \
-        && [ -r "/proc/${previous_x11_pid}/cmdline" ] \
-        && tr '\0' ' ' < "/proc/${previous_x11_pid}/cmdline" | grep -q 'termux-x11'; then
-        kill "$previous_x11_pid" 2>/dev/null || true
-    fi
-fi
 sleep 1
 
 # PulseAudio remains on the Termux side; Debian connects over localhost.
@@ -483,15 +478,33 @@ pactl load-module module-native-protocol-tcp \
 export XDG_RUNTIME_DIR="${TMPDIR}"
 export DISPLAY="${DISPLAY_NUM}"
 
-echo "Starting Termux:X11..."
-termux-x11 "$DISPLAY_NUM" -ac >/dev/null 2>&1 &
-x11_pid=$!
-echo "$x11_pid" > "$X11_PID_FILE"
-sleep 3
-if ! kill -0 "$x11_pid" 2>/dev/null; then
-    echo "ERROR: Termux:X11 did not start successfully." >&2
-    rm -f "$X11_PID_FILE"
-    exit 1
+if [ -S "$X11_SOCKET" ]; then
+    echo "Reusing Termux:X11 on ${DISPLAY_NUM}."
+else
+    echo "Starting Termux:X11..."
+    : > "$X11_LOG"
+    termux-x11 "$DISPLAY_NUM" -ac >"$X11_LOG" 2>&1 &
+    x11_pid=$!
+    echo "$x11_pid" > "$X11_PID_FILE"
+
+    for ((attempt=0; attempt<20; attempt++)); do
+        if [ -S "$X11_SOCKET" ]; then
+            break
+        fi
+        if ! kill -0 "$x11_pid" 2>/dev/null; then
+            break
+        fi
+        sleep 0.25
+    done
+
+    if [ ! -S "$X11_SOCKET" ]; then
+        echo "ERROR: Termux:X11 did not create display ${DISPLAY_NUM}." >&2
+        if [ -s "$X11_LOG" ]; then
+            tail -n 20 "$X11_LOG" >&2
+        fi
+        rm -f "$X11_PID_FILE"
+        exit 1
+    fi
 fi
 
 # Open/focus the Termux:X11 Android activity when `am` is available.
