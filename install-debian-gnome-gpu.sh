@@ -215,10 +215,10 @@ detect_device() {
 
     if [[ "$GPU_TEXT" == *"adreno"* ]] || [[ "$GPU_TEXT" == *"qualcomm"* ]] || [[ "$GPU_TEXT" == *"qcom"* ]]; then
         GPU_DRIVER="freedreno"
-        echo "  GPU path: Qualcomm/Adreno - Turnip/Zink"
+        echo "  GPU path: Qualcomm/Adreno - Freedreno/KGSL + Turnip"
     else
         GPU_DRIVER="swrast"
-        echo "  GPU path: software Vulkan/Zink fallback"
+        echo "  GPU path: software Mesa fallback"
     fi
 
     echo ""
@@ -276,7 +276,7 @@ step_desktop() {
     # Keep the install deliberately smaller than Debian's full `gnome` task.
     # GNOME session provides the Xorg session entries; gnome-shell is the shell.
     debian_apt_install \
-        "dbus-x11 dbus-user-session gnome-shell gnome-session gnome-settings-daemon gnome-control-center gnome-terminal nautilus gnome-tweaks adwaita-icon-theme-full fonts-dejavu-core polkitd xdg-utils" \
+        "dbus-x11 dbus-user-session gnome-shell gnome-session gnome-session-xsession gnome-settings-daemon gnome-control-center gnome-terminal nautilus gnome-tweaks adwaita-icon-theme-full fonts-dejavu-core polkitd xdg-utils" \
         "GNOME desktop"
 
     # GNOME expects logind/systemd on a normal Debian machine. PRoot has neither.
@@ -390,8 +390,7 @@ ICD=$(find /usr/share/vulkan/icd.d /etc/vulkan/icd.d -maxdepth 1 -type f \
 
 mkdir -p /etc/profile.d
 cat > /etc/profile.d/90-debian-gnome-adreno.sh <<EOF
-export MESA_LOADER_DRIVER_OVERRIDE=zink
-export GALLIUM_DRIVER=zink
+export MESA_LOADER_DRIVER_OVERRIDE=kgsl
 EOF
 if [ -n "$ICD" ]; then
     printf "export VK_ICD_FILENAMES=%q\n" "$ICD" >> /etc/profile.d/90-debian-gnome-adreno.sh
@@ -510,9 +509,25 @@ echo "-----------------------------------------------"
 echo ""
 
 # Start the system D-Bus daemon as the container root before entering a
-# potentially unprivileged desktop session.
+# potentially unprivileged desktop session. Minimal PRoot images can have an
+# empty machine-id, which prevents dbus-daemon from creating its socket.
 proot-distro login "$DISTRO" --shared-tmp -- /bin/bash -lc \
-    'mkdir -p /run/dbus; dbus-daemon --system --fork >/dev/null 2>&1 || true'
+    'set -e
+     mkdir -p /run/dbus /var/lib/dbus
+     if [ ! -s /etc/machine-id ]; then
+         dbus-uuidgen --ensure=/etc/machine-id
+     fi
+     ln -sf /etc/machine-id /var/lib/dbus/machine-id
+     if ! dbus-send --system --type=method_call --print-reply \
+         --dest=org.freedesktop.DBus / org.freedesktop.DBus.ListNames \
+         >/dev/null 2>&1; then
+         rm -f /run/dbus/pid /run/dbus/system_bus_socket
+         dbus-daemon --system --fork
+     fi
+     test -S /run/dbus/system_bus_socket' || {
+    echo "ERROR: Could not start Debian system D-Bus." >&2
+    exit 1
+}
 
 exec proot-distro login "$DISTRO" --shared-tmp \
     --user "$DEBIAN_USER" \
@@ -629,7 +644,7 @@ COMPLETE
     echo "NOTE: GNOME in PRoot is less lightweight than XFCE; first startup can take a while."
     echo "Debian session user: ${DEBIAN_USER}"
     if [ "$GPU_ACCELERATION" -eq 1 ]; then
-        echo "GPU: Debian is configured for Adreno KGSL -> Turnip Vulkan -> Zink OpenGL."
+        echo "GPU: Debian is configured for Freedreno/KGSL OpenGL and Turnip Vulkan."
         echo "Verify: Start GNOME and check the GPU probe output; the renderer should not say llvmpipe."
     fi
 }

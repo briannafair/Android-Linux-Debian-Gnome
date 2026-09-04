@@ -1,6 +1,6 @@
 # Debian GNOME for Termux
 
-This project provides a Bash installer for running a Debian 13 GNOME desktop on Android through Termux, PRoot-Distro, and Termux:X11. It configures a focused desktop environment with PulseAudio support and optional Qualcomm Adreno GPU acceleration through Turnip and Zink.
+This project provides a Bash installer for running a Debian 13 GNOME desktop on Android through Termux, PRoot-Distro, and Termux:X11. It configures a focused desktop environment with PulseAudio support and optional Qualcomm Adreno GPU acceleration through Freedreno/KGSL and Turnip.
 
 ## What it installs
 
