@@ -276,7 +276,7 @@ step_desktop() {
     # Keep the install deliberately smaller than Debian's full `gnome` task.
     # GNOME session provides the Xorg session entries; gnome-shell is the shell.
     debian_apt_install \
-        "dbus-x11 dbus-user-session gnome-shell gnome-session gnome-settings-daemon gnome-control-center gnome-terminal nautilus gnome-tweaks adwaita-icon-theme-full fonts-dejavu-core policykit-1 xdg-utils" \
+        "dbus-x11 dbus-user-session gnome-shell gnome-session gnome-settings-daemon gnome-control-center gnome-terminal nautilus gnome-tweaks adwaita-icon-theme-full fonts-dejavu-core polkitd xdg-utils" \
         "GNOME desktop"
 
     # GNOME expects logind/systemd on a normal Debian machine. PRoot has neither.
