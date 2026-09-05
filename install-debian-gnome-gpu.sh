@@ -573,6 +573,9 @@ exec proot-distro login "$DISTRO" --shared-tmp \
         # reliable software renderer instead of producing invisible surfaces.
         export GSK_RENDERER=cairo
         export MOZ_ENABLE_WAYLAND=0
+        export GDK_SCALE=1
+        export GDK_DPI_SCALE=1
+        export QT_SCALE_FACTOR=1
         unset WAYLAND_DISPLAY
 
         # GNOME expects a reachable system bus even though systemd-logind is
@@ -642,13 +645,26 @@ exec proot-distro login "$DISTRO" --shared-tmp \
             export GDK_BACKEND=x11
             export GSK_RENDERER=cairo
             export MOZ_ENABLE_WAYLAND=0
+            export GDK_SCALE=1
+            export GDK_DPI_SCALE=1
+            export QT_SCALE_FACTOR=1
             unset WAYLAND_DISPLAY
             [ -r /etc/profile.d/90-debian-gnome-adreno.sh ] && . /etc/profile.d/90-debian-gnome-adreno.sh
+
+            # Termux:X11 already scales its framebuffer to the Android view.
+            # Mutter fractional/native scaling applies a second coordinate
+            # transform and can place windows beyond the visible workspace.
+            rm -f \"\${HOME}/.config/monitors.xml\"
+            xrandr --dpi 96 >/dev/null 2>&1 || true
+            gsettings set org.gnome.mutter experimental-features "[]" 2>/dev/null || true
+            gsettings set org.gnome.desktop.interface scaling-factor 1 2>/dev/null || true
+
             dbus-update-activation-environment \
                 DISPLAY PULSE_SERVER DBUS_SYSTEM_BUS_ADDRESS \
                 XDG_RUNTIME_DIR XDG_SESSION_TYPE XDG_CURRENT_DESKTOP \
-                XDG_SESSION_DESKTOP GDK_BACKEND GSK_RENDERER \
-                MOZ_ENABLE_WAYLAND 2>/dev/null || true
+                XDG_SESSION_DESKTOP GDK_BACKEND GSK_RENDERER GDK_SCALE \
+                GDK_DPI_SCALE QT_SCALE_FACTOR MOZ_ENABLE_WAYLAND \
+                2>/dev/null || true
             exec gnome-shell --x11
         "
         gnome_status=$?

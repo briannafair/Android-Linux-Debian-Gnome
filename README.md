@@ -67,3 +67,6 @@ connection-test error if that service cannot respond.
 The launcher uses GPU acceleration for GNOME Shell while selecting GTK's Cairo
 renderer for application windows. This avoids invisible GTK4 windows on
 Termux:X11 systems where Mesa-EGL cannot obtain a normal DRI3 render device.
+It also disables Mutter's experimental framebuffer scaling and forces 1x X11
+coordinates, preventing application windows from being placed outside the
+visible Android workspace.
