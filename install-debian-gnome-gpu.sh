@@ -276,7 +276,7 @@ step_desktop() {
     # Keep the install deliberately smaller than Debian's full `gnome` task.
     # GNOME session provides the Xorg session entries; gnome-shell is the shell.
     debian_apt_install \
-        "dbus-x11 dbus-user-session gnome-shell gnome-session gnome-session-xsession gnome-settings-daemon gnome-control-center gnome-terminal nautilus gnome-tweaks adwaita-icon-theme-full fonts-dejavu-core polkitd xdg-utils" \
+        "dbus-x11 dbus-user-session gnome-shell gnome-session gnome-session-xsession gnome-settings-daemon gnome-control-center gnome-terminal nautilus gnome-tweaks adwaita-icon-theme-full fonts-dejavu-core polkitd xdg-utils x11-xserver-utils" \
         "GNOME desktop"
 
     # GNOME expects logind/systemd on a normal Debian machine. PRoot has neither.
@@ -444,6 +444,10 @@ set -u
 DISTRO="debian-gnome"
 DISPLAY_NUM=":2"
 DEBIAN_USER="__DEBIAN_USER__"
+# Termux:X11 native mode exposed a framebuffer exactly twice the usable
+# Android viewport on the tested Samsung device. Override when needed, e.g.
+# TERMUX_X11_DISPLAY_SCALE=150 debian
+TERMUX_X11_DISPLAY_SCALE="${TERMUX_X11_DISPLAY_SCALE:-200}"
 STATE_DIR="${TMPDIR}/debian-gnome"
 X11_PID_FILE="${STATE_DIR}/termux-x11.pid"
 X11_LOG="${STATE_DIR}/termux-x11.log"
@@ -498,6 +502,20 @@ export XDG_RUNTIME_DIR="${TMPDIR}"
 export DISPLAY="${DISPLAY_NUM}"
 termux-wake-lock 2>/dev/null || true
 
+# Configure the Android activity before connecting the X server. In scaled
+# mode Termux:X11 divides the activity dimensions by displayScale / 100, so
+# 200 converts the observed 2x physical-pixel framebuffer to logical pixels.
+am start --user 0 -n com.termux.x11/com.termux.x11.MainActivity >/dev/null 2>&1 || true
+sleep 0.5
+if command -v termux-x11-preference >/dev/null 2>&1 \
+    && command -v timeout >/dev/null 2>&1; then
+    if ! timeout 5 termux-x11-preference \
+        "displayResolutionMode"="scaled" \
+        "displayScale"="$TERMUX_X11_DISPLAY_SCALE" >/dev/null 2>&1; then
+        echo "WARNING: Could not set Termux:X11 scaled resolution automatically." >&2
+    fi
+fi
+
 echo "Starting Termux:X11..."
 : > "$X11_LOG"
 termux-x11 "$DISPLAY_NUM" -ac >"$X11_LOG" 2>&1 &
@@ -524,7 +542,7 @@ if [ ! -S "$X11_SOCKET" ]; then
 fi
 echo "Started Termux:X11 on ${DISPLAY_NUM}."
 
-# Open/focus the Termux:X11 Android activity when `am` is available.
+# Focus the Termux:X11 Android activity after the server is ready.
 am start --user 0 -n com.termux.x11/com.termux.x11.MainActivity >/dev/null 2>&1 || true
 sleep 1
 

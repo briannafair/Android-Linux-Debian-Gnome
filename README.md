@@ -70,3 +70,12 @@ Termux:X11 systems where Mesa-EGL cannot obtain a normal DRI3 render device.
 It also disables Mutter's experimental framebuffer scaling and forces 1x X11
 coordinates, preventing application windows from being placed outside the
 visible Android workspace.
+
+On high-density Samsung displays the launcher configures Termux:X11 for
+`scaled` resolution at 200%, producing a logical-pixel framebuffer instead of
+the observed 2x native framebuffer. To select another scale for a different
+display, start the desktop with, for example:
+
+```bash
+TERMUX_X11_DISPLAY_SCALE=150 debian
+```
