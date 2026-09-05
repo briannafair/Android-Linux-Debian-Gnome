@@ -60,5 +60,6 @@ chmod +x install-debian-gnome-gpu.sh
 ```
 
 The installer reuses the existing `debian-gnome` container; rerunning it does
-not create another Debian installation. The launcher now prints both daemon
-output and the D-Bus connection-test error when startup fails.
+not create another Debian installation. The launcher starts GNOME and its
+D-Bus compatibility service in one regular-user PRoot session and prints the
+connection-test error if that service cannot respond.

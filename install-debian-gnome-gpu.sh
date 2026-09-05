@@ -448,10 +448,6 @@ STATE_DIR="${TMPDIR}/debian-gnome"
 X11_PID_FILE="${STATE_DIR}/termux-x11.pid"
 X11_LOG="${STATE_DIR}/termux-x11.log"
 SYSTEM_DBUS_PID_FILE="${STATE_DIR}/system-dbus.pid"
-SYSTEM_DBUS_LOG="${STATE_DIR}/system-dbus.log"
-SYSTEM_DBUS_PROBE_LOG="${STATE_DIR}/system-dbus-probe.log"
-# Keep the bus socket directly below shared /tmp. STATE_DIR contains private
-# launcher logs (mode 700), which the regular Debian user cannot traverse.
 SYSTEM_DBUS_SOCKET="${TMPDIR}/debian-gnome-system-bus"
 SYSTEM_DBUS_ADDRESS="unix:path=/tmp/debian-gnome-system-bus"
 X11_DISPLAY_ID="${DISPLAY_NUM#:}"
@@ -542,19 +538,8 @@ echo "  Audio: PulseAudio over localhost"
 echo "-----------------------------------------------"
 echo ""
 
-# Prepare a private system bus as root. Its socket is placed in the shared temp
-# directory so the desktop user's PRoot session sees the exact same endpoint.
-proot-distro login "$DISTRO" --shared-tmp -- /bin/bash -lc \
-    'set -e
-     mkdir -p /var/lib/dbus
-     if [ ! -s /etc/machine-id ]; then
-         dbus-uuidgen --ensure=/etc/machine-id
-     fi
-     ln -sf /etc/machine-id /var/lib/dbus/machine-id' || {
-    echo "ERROR: Could not prepare Debian system D-Bus." >&2
-    exit 1
-}
-
+# Clean up a bus left by an older launcher revision. The new compatibility bus
+# runs inside the same regular-user PRoot session as GNOME.
 if [ -r "$SYSTEM_DBUS_PID_FILE" ]; then
     read -r previous_system_dbus_pid < "$SYSTEM_DBUS_PID_FILE"
     if kill -0 "$previous_system_dbus_pid" 2>/dev/null \
@@ -565,53 +550,6 @@ if [ -r "$SYSTEM_DBUS_PID_FILE" ]; then
     rm -f "$SYSTEM_DBUS_PID_FILE"
 fi
 rm -f "$SYSTEM_DBUS_SOCKET"
-
-echo "Starting Debian system D-Bus..."
-: > "$SYSTEM_DBUS_LOG"
-: > "$SYSTEM_DBUS_PROBE_LOG"
-proot-distro login "$DISTRO" --shared-tmp -- \
-    dbus-daemon --system --nofork --nopidfile --nosyslog \
-    --address="$SYSTEM_DBUS_ADDRESS" --print-address=1 \
-    >"$SYSTEM_DBUS_LOG" 2>&1 &
-system_dbus_pid=$!
-echo "$system_dbus_pid" > "$SYSTEM_DBUS_PID_FILE"
-
-system_dbus_ready=0
-for ((attempt=0; attempt<50; attempt++)); do
-    if proot-distro login "$DISTRO" --shared-tmp \
-        --user "$DEBIAN_USER" \
-        -- dbus-send --bus="$SYSTEM_DBUS_ADDRESS" \
-        --type=method_call --print-reply --reply-timeout=1000 \
-        --dest=org.freedesktop.DBus / org.freedesktop.DBus.ListNames \
-        >/dev/null 2>"$SYSTEM_DBUS_PROBE_LOG"; then
-        system_dbus_ready=1
-        break
-    fi
-    if ! kill -0 "$system_dbus_pid" 2>/dev/null; then
-        break
-    fi
-    sleep 0.1
-done
-
-if [ "$system_dbus_ready" -ne 1 ]; then
-    echo "ERROR: Could not start Debian system D-Bus." >&2
-    if [ -s "$SYSTEM_DBUS_LOG" ]; then
-        echo "D-Bus daemon output:" >&2
-        tail -n 20 "$SYSTEM_DBUS_LOG" >&2
-    fi
-    if [ -s "$SYSTEM_DBUS_PROBE_LOG" ]; then
-        echo "D-Bus connection test:" >&2
-        tail -n 20 "$SYSTEM_DBUS_PROBE_LOG" >&2
-    fi
-    if [ -e "$SYSTEM_DBUS_SOCKET" ]; then
-        ls -l "$SYSTEM_DBUS_SOCKET" >&2
-    else
-        echo "D-Bus socket was not created: $SYSTEM_DBUS_SOCKET" >&2
-    fi
-    kill "$system_dbus_pid" 2>/dev/null || true
-    rm -f "$SYSTEM_DBUS_PID_FILE" "$SYSTEM_DBUS_SOCKET"
-    exit 1
-fi
 
 exec proot-distro login "$DISTRO" --shared-tmp \
     --user "$DEBIAN_USER" \
@@ -630,6 +568,41 @@ exec proot-distro login "$DISTRO" --shared-tmp \
         export XDG_SESSION_DESKTOP=gnome
         export GDK_BACKEND=x11
         export QT_QPA_PLATFORM=xcb
+
+        # GNOME expects a reachable system bus even though systemd-logind is
+        # unavailable in PRoot. Start a permissive session-configured bus at
+        # the system-bus address. Keeping it in this same PRoot session avoids
+        # Unix-credential translation between separate PRoot supervisors.
+        system_bus_socket=/tmp/debian-gnome-system-bus
+        system_bus_address=unix:path="$system_bus_socket"
+        system_bus_pid_file=/tmp/debian-gnome-system-bus.pid
+        system_bus_log=/tmp/debian-gnome-system-bus.log
+        rm -f "$system_bus_socket" "$system_bus_pid_file" "$system_bus_log"
+
+        echo "Starting Debian D-Bus compatibility bus..."
+        if ! dbus-daemon --session --fork --nopidfile --nosyslog \
+            --address="$system_bus_address" --print-address=1 --print-pid=3 \
+            3>"$system_bus_pid_file" >"$system_bus_log" 2>&1; then
+            echo "ERROR: Could not launch the Debian D-Bus compatibility bus." >&2
+            cat "$system_bus_log" >&2 2>/dev/null || true
+            exit 1
+        fi
+        read -r system_bus_pid < "$system_bus_pid_file"
+        cleanup_system_bus() {
+            kill "$system_bus_pid" 2>/dev/null || true
+            rm -f "$system_bus_socket" "$system_bus_pid_file"
+        }
+        trap cleanup_system_bus EXIT INT TERM
+
+        if ! dbus-send --bus="$system_bus_address" \
+            --type=method_call --print-reply --reply-timeout=3000 \
+            --dest=org.freedesktop.DBus / org.freedesktop.DBus.ListNames \
+            >/dev/null 2>"$system_bus_log.probe"; then
+            echo "ERROR: Debian D-Bus compatibility bus did not respond." >&2
+            cat "$system_bus_log" "$system_bus_log.probe" >&2 2>/dev/null || true
+            exit 1
+        fi
+        echo "Debian D-Bus compatibility bus is ready."
 
         # Load Debian-side Adreno/Turnip settings when the KGSL Mesa package was installed.
         [ -r /etc/profile.d/90-debian-gnome-adreno.sh ] && . /etc/profile.d/90-debian-gnome-adreno.sh
@@ -664,6 +637,8 @@ exec proot-distro login "$DISTRO" --shared-tmp \
             [ -r /etc/profile.d/90-debian-gnome-adreno.sh ] && . /etc/profile.d/90-debian-gnome-adreno.sh
             exec gnome-shell --x11
         "
+        gnome_status=$?
+        exit "$gnome_status"
     '
 LAUNCHEREOF
     sed -i "s/__DEBIAN_USER__/${DEBIAN_USER}/g" "$HOME/start-debian-gnome.sh"
