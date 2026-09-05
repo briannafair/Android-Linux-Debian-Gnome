@@ -114,6 +114,15 @@ create_debian_user() {
 
         usermod --append --groups sudo '${DEBIAN_USER}'
 
+        # PRoot sessions do not always restore supplementary groups reliably.
+        # Give the selected account the same password-protected access as the
+        # standard Debian sudo-group rule without depending on group discovery.
+        install -d -m 750 /etc/sudoers.d
+        printf '%s ALL=(ALL:ALL) ALL\n' '${DEBIAN_USER}' \
+            > /etc/sudoers.d/debian-gnome-user
+        chmod 440 /etc/sudoers.d/debian-gnome-user
+        visudo -cf /etc/sudoers.d/debian-gnome-user >/dev/null
+
         for group in audio video render plugdev; do
             if getent group \"\$group\" >/dev/null 2>&1; then
                 usermod --append --groups \"\$group\" '${DEBIAN_USER}'

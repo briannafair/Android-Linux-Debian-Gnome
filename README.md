@@ -40,7 +40,7 @@ chmod +x install-debian-gnome-gpu.sh
 ./install-debian-gnome-gpu.sh
 ```
 
-During installation, you can enter a lowercase username for the Debian desktop and command-line sessions. Press Enter without entering a name to use the default `root` account. When a regular account is selected, the installer adds it to the `sudo` group and prompts for a Debian password when needed. It also adds the account to available audio, video, rendering, and device-access groups.
+During installation, you can enter a lowercase username for the Debian desktop and command-line sessions. Press Enter without entering a name to use the default `root` account. When a regular account is selected, the installer gives it password-protected `sudo` access and prompts for a Debian password when needed. It also adds the account to available audio, video, rendering, and device-access groups. The installer uses an explicit sudo rule because PRoot does not always restore supplementary group membership reliably.
 
 The following commands are available immediately after installation:
 
