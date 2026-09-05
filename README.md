@@ -63,3 +63,7 @@ The installer reuses the existing `debian-gnome` container; rerunning it does
 not create another Debian installation. The launcher starts GNOME and its
 D-Bus compatibility service in one regular-user PRoot session and prints the
 connection-test error if that service cannot respond.
+
+The launcher uses GPU acceleration for GNOME Shell while selecting GTK's Cairo
+renderer for application windows. This avoids invisible GTK4 windows on
+Termux:X11 systems where Mesa-EGL cannot obtain a normal DRI3 render device.

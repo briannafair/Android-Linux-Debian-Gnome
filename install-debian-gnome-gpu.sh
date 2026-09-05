@@ -568,6 +568,12 @@ exec proot-distro login "$DISTRO" --shared-tmp \
         export XDG_SESSION_DESKTOP=gnome
         export GDK_BACKEND=x11
         export QT_QPA_PLATFORM=xcb
+        # Termux:X11 does not expose the normal DRI3 render-node path. Keep
+        # Mutter accelerated, but make GTK4 application windows use their
+        # reliable software renderer instead of producing invisible surfaces.
+        export GSK_RENDERER=cairo
+        export MOZ_ENABLE_WAYLAND=0
+        unset WAYLAND_DISPLAY
 
         # GNOME expects a reachable system bus even though systemd-logind is
         # unavailable in PRoot. Start a permissive session-configured bus at
@@ -634,7 +640,15 @@ exec proot-distro login "$DISTRO" --shared-tmp \
             export XDG_CURRENT_DESKTOP=GNOME
             export XDG_SESSION_DESKTOP=gnome
             export GDK_BACKEND=x11
+            export GSK_RENDERER=cairo
+            export MOZ_ENABLE_WAYLAND=0
+            unset WAYLAND_DISPLAY
             [ -r /etc/profile.d/90-debian-gnome-adreno.sh ] && . /etc/profile.d/90-debian-gnome-adreno.sh
+            dbus-update-activation-environment \
+                DISPLAY PULSE_SERVER DBUS_SYSTEM_BUS_ADDRESS \
+                XDG_RUNTIME_DIR XDG_SESSION_TYPE XDG_CURRENT_DESKTOP \
+                XDG_SESSION_DESKTOP GDK_BACKEND GSK_RENDERER \
+                MOZ_ENABLE_WAYLAND 2>/dev/null || true
             exec gnome-shell --x11
         "
         gnome_status=$?
