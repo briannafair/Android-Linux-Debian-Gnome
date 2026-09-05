@@ -424,8 +424,61 @@ step_apps() {
     echo ""
 
     debian_apt_install \
-        "firefox-esr git wget curl ca-certificates nano less file procps psmisc" \
-        "Firefox and base utilities"
+        "firefox-esr synaptic git wget curl ca-certificates nano less file procps psmisc" \
+        "Firefox, Synaptic, and base utilities"
+}
+
+configure_synaptic_launcher() {
+    # Synaptic's stock launcher uses pkexec, which cannot authenticate without a
+    # normal systemd/logind PolicyKit session. Use sudo for this one package
+    # manager instead. PRoot's root user has no additional Android privileges.
+    debian_run '
+        set -e
+
+        install -d -m 755 /usr/local/bin /usr/local/share/applications
+        cat > /usr/local/bin/debian-software <<"SYNAPTICWRAPPER"
+#!/bin/sh
+if [ "$(id -u)" -eq 0 ]; then
+    exec /usr/sbin/synaptic "$@"
+fi
+
+exec sudo -n -E /usr/sbin/synaptic "$@"
+SYNAPTICWRAPPER
+        chmod 755 /usr/local/bin/debian-software
+
+        # This desktop file has the same desktop ID as the stock Synaptic entry,
+        # so /usr/local/share overrides its non-working pkexec launcher.
+        cat > /usr/local/share/applications/synaptic.desktop <<"SYNAPTICDESKTOP"
+[Desktop Entry]
+Name=Software
+GenericName=Package Manager
+Comment=Install, remove, and upgrade Debian packages
+Exec=/usr/local/bin/debian-software
+Icon=synaptic
+Terminal=false
+Type=Application
+Categories=System;PackageManager;
+Keywords=software;packages;install;remove;upgrade;
+StartupNotify=true
+SYNAPTICDESKTOP
+        chmod 644 /usr/local/share/applications/synaptic.desktop
+    '
+
+    if [ "$DEBIAN_USER" != "root" ]; then
+        debian_run "
+            set -e
+            install -d -m 750 /etc/sudoers.d
+            printf '%s ALL=(root) NOPASSWD: SETENV: /usr/sbin/synaptic\n' \
+                '${DEBIAN_USER}' > /etc/sudoers.d/debian-gnome-synaptic
+            chmod 440 /etc/sudoers.d/debian-gnome-synaptic
+            visudo -cf /etc/sudoers.d/debian-gnome-synaptic >/dev/null
+        "
+    else
+        # Remove a rule left by an earlier regular-user configuration.
+        debian_run 'rm -f /etc/sudoers.d/debian-gnome-synaptic'
+    fi
+
+    echo "  OK: Added Software (Synaptic) to the GNOME app launcher"
 }
 
 # ============== STEP 8 ==============
@@ -435,6 +488,7 @@ step_launchers() {
     echo ""
 
     create_debian_user
+    configure_synaptic_launcher
 
     cat > "$HOME/start-debian-gnome.sh" << 'LAUNCHEREOF'
 #!/data/data/com.termux/files/usr/bin/bash

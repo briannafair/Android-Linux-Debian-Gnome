@@ -8,10 +8,17 @@ This project provides a Bash installer for running a Debian 13 GNOME desktop on 
 - A compact GNOME desktop environment
 - Termux:X11 display integration
 - PulseAudio connectivity between Termux and Debian
-- Firefox ESR and common command-line utilities
+- Firefox ESR, Synaptic package manager, and common command-line utilities
 - Optional KGSL/Turnip acceleration on supported ARM64 Adreno devices
 
 The installer also creates start, stop, and shell launchers and installs convenient commands in Termux's executable path.
+
+Synaptic appears as **Software** in GNOME's app launcher. It can install,
+remove, and update packages from the configured Debian repositories. Its
+launcher uses narrowly scoped passwordless `sudo` access to Synaptic because
+the normal PolicyKit authentication flow is unavailable in a PRoot desktop.
+This elevation applies only inside the Debian container and does not grant
+Android root access.
 
 ## Requirements
 
