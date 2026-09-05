@@ -447,6 +447,8 @@ DEBIAN_USER="__DEBIAN_USER__"
 STATE_DIR="${TMPDIR}/debian-gnome"
 X11_PID_FILE="${STATE_DIR}/termux-x11.pid"
 X11_LOG="${STATE_DIR}/termux-x11.log"
+SYSTEM_DBUS_PID_FILE="${STATE_DIR}/system-dbus.pid"
+SYSTEM_DBUS_LOG="${STATE_DIR}/system-dbus.log"
 X11_DISPLAY_ID="${DISPLAY_NUM#:}"
 X11_SOCKET="${TMPDIR}/.X11-unix/X${X11_DISPLAY_ID}"
 X11_LOCK="${TMPDIR}/.X${X11_DISPLAY_ID}-lock"
@@ -535,9 +537,8 @@ echo "  Audio: PulseAudio over localhost"
 echo "-----------------------------------------------"
 echo ""
 
-# Start the system D-Bus daemon as the container root before entering a
-# potentially unprivileged desktop session. Minimal PRoot images can have an
-# empty machine-id, which prevents dbus-daemon from creating its socket.
+# Prepare the system bus as root. Keep its PRoot login alive because daemons
+# forked from a short-lived PRoot login are terminated when that login exits.
 proot-distro login "$DISTRO" --shared-tmp -- /bin/bash -lc \
     'set -e
      mkdir -p /run/dbus /var/lib/dbus
@@ -546,15 +547,57 @@ proot-distro login "$DISTRO" --shared-tmp -- /bin/bash -lc \
      fi
      ln -sf /etc/machine-id /var/lib/dbus/machine-id
      if ! dbus-send --system --type=method_call --print-reply \
-         --dest=org.freedesktop.DBus / org.freedesktop.DBus.ListNames \
-         >/dev/null 2>&1; then
+          --dest=org.freedesktop.DBus / org.freedesktop.DBus.ListNames \
+          >/dev/null 2>&1; then
          rm -f /run/dbus/pid /run/dbus/system_bus_socket
-         dbus-daemon --system --fork
-     fi
-     test -S /run/dbus/system_bus_socket' || {
-    echo "ERROR: Could not start Debian system D-Bus." >&2
+     fi' || {
+    echo "ERROR: Could not prepare Debian system D-Bus." >&2
     exit 1
 }
+
+if ! proot-distro login "$DISTRO" --shared-tmp -- \
+    dbus-send --system --type=method_call --print-reply \
+    --dest=org.freedesktop.DBus / org.freedesktop.DBus.ListNames \
+    >/dev/null 2>&1; then
+    echo "Starting Debian system D-Bus..."
+    : > "$SYSTEM_DBUS_LOG"
+    proot-distro login "$DISTRO" --shared-tmp -- \
+        dbus-daemon --system --nofork --nopidfile \
+        >"$SYSTEM_DBUS_LOG" 2>&1 &
+    system_dbus_pid=$!
+    echo "$system_dbus_pid" > "$SYSTEM_DBUS_PID_FILE"
+
+    system_dbus_ready=0
+    for ((attempt=0; attempt<30; attempt++)); do
+        if proot-distro login "$DISTRO" --shared-tmp -- \
+            dbus-send --system --type=method_call --print-reply \
+            --dest=org.freedesktop.DBus / org.freedesktop.DBus.ListNames \
+            >/dev/null 2>&1; then
+            system_dbus_ready=1
+            break
+        fi
+        if ! kill -0 "$system_dbus_pid" 2>/dev/null; then
+            break
+        fi
+        sleep 0.1
+    done
+
+    if [ "$system_dbus_ready" -ne 1 ]; then
+        echo "ERROR: Could not start Debian system D-Bus." >&2
+        if [ -s "$SYSTEM_DBUS_LOG" ]; then
+            tail -n 20 "$SYSTEM_DBUS_LOG" >&2
+        fi
+        exit 1
+    fi
+fi
+
+if ! proot-distro login "$DISTRO" --shared-tmp -- \
+    dbus-send --system --type=method_call --print-reply \
+    --dest=org.freedesktop.DBus / org.freedesktop.DBus.ListNames \
+    >/dev/null 2>&1; then
+    echo "ERROR: Could not start Debian system D-Bus." >&2
+    exit 1
+fi
 
 exec proot-distro login "$DISTRO" --shared-tmp \
     --user "$DEBIAN_USER" \
@@ -624,12 +667,22 @@ set -u
 
 STATE_DIR="${TMPDIR}/debian-gnome"
 X11_PID_FILE="${STATE_DIR}/termux-x11.pid"
+SYSTEM_DBUS_PID_FILE="${STATE_DIR}/system-dbus.pid"
 
 echo "Stopping Debian GNOME."
 pkill -f 'gnome-shell' 2>/dev/null || true
 pkill -f 'gnome-session' 2>/dev/null || true
 pkill termux-x11 2>/dev/null || true
 rm -f "$X11_PID_FILE"
+if [ -r "$SYSTEM_DBUS_PID_FILE" ]; then
+    read -r system_dbus_pid < "$SYSTEM_DBUS_PID_FILE"
+    if kill -0 "$system_dbus_pid" 2>/dev/null \
+        && [ -r "/proc/${system_dbus_pid}/cmdline" ] \
+        && tr '\0' ' ' < "/proc/${system_dbus_pid}/cmdline" | grep -q 'dbus-daemon --system'; then
+        kill "$system_dbus_pid" 2>/dev/null || true
+    fi
+    rm -f "$SYSTEM_DBUS_PID_FILE"
+fi
 pulseaudio --kill 2>/dev/null || true
 termux-wake-unlock 2>/dev/null || true
 echo "Desktop stopped."
