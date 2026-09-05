@@ -9,7 +9,7 @@ INSTALL_LOG=""
 DEBIAN_USER="root"
 readonly DISTRO="debian-gnome"
 readonly DEBIAN_IMAGE="debian:13"
-readonly DISPLAY_NUM=":0"
+readonly DISPLAY_NUM=":2"
 
 # ============== HELPERS ==============
 update_progress() {
@@ -442,11 +442,14 @@ step_launchers() {
 set -u
 
 DISTRO="debian-gnome"
-DISPLAY_NUM=":0"
+DISPLAY_NUM=":2"
 DEBIAN_USER="__DEBIAN_USER__"
 STATE_DIR="${TMPDIR}/debian-gnome"
 X11_PID_FILE="${STATE_DIR}/termux-x11.pid"
 X11_LOG="${STATE_DIR}/termux-x11.log"
+X11_DISPLAY_ID="${DISPLAY_NUM#:}"
+X11_SOCKET="${TMPDIR}/.X11-unix/X${X11_DISPLAY_ID}"
+X11_LOCK="${TMPDIR}/.X${X11_DISPLAY_ID}-lock"
 
 echo ""
 echo "Starting Debian GNOME"
@@ -461,8 +464,20 @@ echo "Cleaning up previous desktop session..."
 pkill -f 'gnome-shell' 2>/dev/null || true
 pkill -f 'gnome-session' 2>/dev/null || true
 pkill termux-x11 2>/dev/null || true
+
+for ((attempt=0; attempt<20; attempt++)); do
+    if ! pgrep -x termux-x11 >/dev/null 2>&1; then
+        break
+    fi
+    sleep 0.1
+done
+if pgrep -x termux-x11 >/dev/null 2>&1; then
+    pkill -9 termux-x11 2>/dev/null || true
+    sleep 0.5
+fi
+
 rm -f "$X11_PID_FILE"
-sleep 1
+rm -f "$X11_SOCKET" "$X11_LOCK"
 
 # PulseAudio remains on the Termux side; Debian connects over localhost.
 unset PULSE_SERVER
@@ -478,24 +493,33 @@ pactl load-module module-native-protocol-tcp \
 # Termux:X11 / PRoot share the Termux tmp directory.
 export XDG_RUNTIME_DIR="${TMPDIR}"
 export DISPLAY="${DISPLAY_NUM}"
+termux-wake-lock 2>/dev/null || true
 
 echo "Starting Termux:X11..."
 : > "$X11_LOG"
 termux-x11 "$DISPLAY_NUM" -ac >"$X11_LOG" 2>&1 &
 x11_pid=$!
 echo "$x11_pid" > "$X11_PID_FILE"
-sleep 3
 
-if kill -0 "$x11_pid" 2>/dev/null; then
-    echo "Started Termux:X11 on ${DISPLAY_NUM}."
-else
-    echo "ERROR: Termux:X11 did not start successfully." >&2
+for ((attempt=0; attempt<30; attempt++)); do
+    if [ -S "$X11_SOCKET" ]; then
+        break
+    fi
+    if ! kill -0 "$x11_pid" 2>/dev/null; then
+        break
+    fi
+    sleep 0.1
+done
+
+if [ ! -S "$X11_SOCKET" ]; then
+    echo "ERROR: Termux:X11 did not create ${X11_SOCKET}." >&2
     if [ -s "$X11_LOG" ]; then
         tail -n 20 "$X11_LOG" >&2
     fi
     rm -f "$X11_PID_FILE"
     exit 1
 fi
+echo "Started Termux:X11 on ${DISPLAY_NUM}."
 
 # Open/focus the Termux:X11 Android activity when `am` is available.
 am start --user 0 -n com.termux.x11/com.termux.x11.MainActivity >/dev/null 2>&1 || true
@@ -540,7 +564,7 @@ exec proot-distro login "$DISTRO" --shared-tmp \
     --env XDG_CURRENT_DESKTOP="GNOME" \
     --env XDG_SESSION_DESKTOP="gnome" \
     -- /bin/bash -lc '
-        export DISPLAY=:0
+        export DISPLAY=:2
         export PULSE_SERVER=tcp:127.0.0.1
         export XDG_SESSION_TYPE=x11
         export XDG_CURRENT_DESKTOP=GNOME
@@ -567,10 +591,10 @@ exec proot-distro login "$DISTRO" --shared-tmp \
         mkdir -p "$XDG_RUNTIME_DIR"
         chmod 700 "$XDG_RUNTIME_DIR"
 
-        # gnome-session gives a more complete session than starting gnome-shell alone.
-        # Fall back to gnome-shell --x11 if the session wrapper fails.
+        # GNOME 48 normally delegates session startup to systemd-logind, which
+        # is unavailable in PRoot. Start Shell directly in a private session bus.
         dbus-run-session -- bash -lc "
-            export DISPLAY=:0
+            export DISPLAY=:2
             export PULSE_SERVER=tcp:127.0.0.1
             export XDG_RUNTIME_DIR=/tmp/runtime-${USER:-root}
             export XDG_SESSION_TYPE=x11
@@ -578,7 +602,7 @@ exec proot-distro login "$DISTRO" --shared-tmp \
             export XDG_SESSION_DESKTOP=gnome
             export GDK_BACKEND=x11
             [ -r /etc/profile.d/90-debian-gnome-adreno.sh ] && . /etc/profile.d/90-debian-gnome-adreno.sh
-            gnome-session --session=gnome || exec gnome-shell --x11
+            exec gnome-shell --x11
         "
     '
 LAUNCHEREOF
@@ -607,6 +631,7 @@ pkill -f 'gnome-session' 2>/dev/null || true
 pkill termux-x11 2>/dev/null || true
 rm -f "$X11_PID_FILE"
 pulseaudio --kill 2>/dev/null || true
+termux-wake-unlock 2>/dev/null || true
 echo "Desktop stopped."
 STOPEOF
     chmod +x "$HOME/stop-debian-gnome.sh"
