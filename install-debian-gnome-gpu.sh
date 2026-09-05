@@ -449,8 +449,11 @@ X11_PID_FILE="${STATE_DIR}/termux-x11.pid"
 X11_LOG="${STATE_DIR}/termux-x11.log"
 SYSTEM_DBUS_PID_FILE="${STATE_DIR}/system-dbus.pid"
 SYSTEM_DBUS_LOG="${STATE_DIR}/system-dbus.log"
-SYSTEM_DBUS_SOCKET="${STATE_DIR}/system_bus_socket"
-SYSTEM_DBUS_ADDRESS="unix:path=/tmp/debian-gnome/system_bus_socket"
+SYSTEM_DBUS_PROBE_LOG="${STATE_DIR}/system-dbus-probe.log"
+# Keep the bus socket directly below shared /tmp. STATE_DIR contains private
+# launcher logs (mode 700), which the regular Debian user cannot traverse.
+SYSTEM_DBUS_SOCKET="${TMPDIR}/debian-gnome-system-bus"
+SYSTEM_DBUS_ADDRESS="unix:path=/tmp/debian-gnome-system-bus"
 X11_DISPLAY_ID="${DISPLAY_NUM#:}"
 X11_SOCKET="${TMPDIR}/.X11-unix/X${X11_DISPLAY_ID}"
 X11_LOCK="${TMPDIR}/.X${X11_DISPLAY_ID}-lock"
@@ -565,20 +568,22 @@ rm -f "$SYSTEM_DBUS_SOCKET"
 
 echo "Starting Debian system D-Bus..."
 : > "$SYSTEM_DBUS_LOG"
+: > "$SYSTEM_DBUS_PROBE_LOG"
 proot-distro login "$DISTRO" --shared-tmp -- \
-    dbus-daemon --system --nofork --nopidfile --address="$SYSTEM_DBUS_ADDRESS" \
+    dbus-daemon --system --nofork --nopidfile --nosyslog \
+    --address="$SYSTEM_DBUS_ADDRESS" --print-address=1 \
     >"$SYSTEM_DBUS_LOG" 2>&1 &
 system_dbus_pid=$!
 echo "$system_dbus_pid" > "$SYSTEM_DBUS_PID_FILE"
 
 system_dbus_ready=0
-for ((attempt=0; attempt<30; attempt++)); do
+for ((attempt=0; attempt<50; attempt++)); do
     if proot-distro login "$DISTRO" --shared-tmp \
         --user "$DEBIAN_USER" \
-        --env DBUS_SYSTEM_BUS_ADDRESS="$SYSTEM_DBUS_ADDRESS" \
-        -- dbus-send --system --type=method_call --print-reply \
+        -- dbus-send --bus="$SYSTEM_DBUS_ADDRESS" \
+        --type=method_call --print-reply --reply-timeout=1000 \
         --dest=org.freedesktop.DBus / org.freedesktop.DBus.ListNames \
-        >/dev/null 2>&1; then
+        >/dev/null 2>"$SYSTEM_DBUS_PROBE_LOG"; then
         system_dbus_ready=1
         break
     fi
@@ -591,7 +596,17 @@ done
 if [ "$system_dbus_ready" -ne 1 ]; then
     echo "ERROR: Could not start Debian system D-Bus." >&2
     if [ -s "$SYSTEM_DBUS_LOG" ]; then
+        echo "D-Bus daemon output:" >&2
         tail -n 20 "$SYSTEM_DBUS_LOG" >&2
+    fi
+    if [ -s "$SYSTEM_DBUS_PROBE_LOG" ]; then
+        echo "D-Bus connection test:" >&2
+        tail -n 20 "$SYSTEM_DBUS_PROBE_LOG" >&2
+    fi
+    if [ -e "$SYSTEM_DBUS_SOCKET" ]; then
+        ls -l "$SYSTEM_DBUS_SOCKET" >&2
+    else
+        echo "D-Bus socket was not created: $SYSTEM_DBUS_SOCKET" >&2
     fi
     kill "$system_dbus_pid" 2>/dev/null || true
     rm -f "$SYSTEM_DBUS_PID_FILE" "$SYSTEM_DBUS_SOCKET"
@@ -609,7 +624,7 @@ exec proot-distro login "$DISTRO" --shared-tmp \
     -- /bin/bash -lc '
         export DISPLAY=:2
         export PULSE_SERVER=tcp:127.0.0.1
-        export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/tmp/debian-gnome/system_bus_socket
+        export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/tmp/debian-gnome-system-bus
         export XDG_SESSION_TYPE=x11
         export XDG_CURRENT_DESKTOP=GNOME
         export XDG_SESSION_DESKTOP=gnome
@@ -640,7 +655,7 @@ exec proot-distro login "$DISTRO" --shared-tmp \
         dbus-run-session -- bash -lc "
             export DISPLAY=:2
             export PULSE_SERVER=tcp:127.0.0.1
-            export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/tmp/debian-gnome/system_bus_socket
+            export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/tmp/debian-gnome-system-bus
             export XDG_RUNTIME_DIR=/tmp/runtime-${USER:-root}
             export XDG_SESSION_TYPE=x11
             export XDG_CURRENT_DESKTOP=GNOME
@@ -670,7 +685,7 @@ set -u
 STATE_DIR="${TMPDIR}/debian-gnome"
 X11_PID_FILE="${STATE_DIR}/termux-x11.pid"
 SYSTEM_DBUS_PID_FILE="${STATE_DIR}/system-dbus.pid"
-SYSTEM_DBUS_SOCKET="${STATE_DIR}/system_bus_socket"
+SYSTEM_DBUS_SOCKET="${TMPDIR}/debian-gnome-system-bus"
 
 echo "Stopping Debian GNOME."
 pkill -f 'gnome-shell' 2>/dev/null || true

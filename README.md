@@ -46,3 +46,19 @@ debian-stop   Stop the desktop session
 ## Notes
 
 GNOME runs without systemd inside PRoot, so some features available on a conventional Debian installation may be limited. GPU acceleration is device-dependent; unsupported devices use Mesa's normal software fallback.
+
+## Troubleshooting
+
+If `debian` reports that Debian system D-Bus could not start, update the
+installer and run it again so the launchers are regenerated:
+
+```bash
+curl -fL -o install-debian-gnome-gpu.sh \
+  "https://raw.githubusercontent.com/briannafair/Android-Linux-Debian-Gnome/refs/heads/main/install-debian-gnome-gpu.sh?$(date +%s)"
+chmod +x install-debian-gnome-gpu.sh
+./install-debian-gnome-gpu.sh
+```
+
+The installer reuses the existing `debian-gnome` container; rerunning it does
+not create another Debian installation. The launcher now prints both daemon
+output and the D-Bus connection-test error when startup fails.
