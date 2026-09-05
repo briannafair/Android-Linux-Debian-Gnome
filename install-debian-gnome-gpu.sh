@@ -488,14 +488,18 @@ SYNAPTICDESKTOP
         debian_run "
             set -e
             install -d -m 750 /etc/sudoers.d
-            printf '%s ALL=(root) NOPASSWD: SETENV: /usr/sbin/synaptic\n' \
-                '${DEBIAN_USER}' > /etc/sudoers.d/debian-gnome-synaptic
-            chmod 440 /etc/sudoers.d/debian-gnome-synaptic
-            visudo -cf /etc/sudoers.d/debian-gnome-synaptic >/dev/null
+            # Keep both entries in one file and put the Synaptic exception
+            # last. Sudo uses the tag from the last matching command rule.
+            printf '%s ALL=(ALL:ALL) ALL\n%s ALL=(root) NOPASSWD: SETENV: /usr/sbin/synaptic\n' \
+                '${DEBIAN_USER}' '${DEBIAN_USER}' \
+                > /etc/sudoers.d/debian-gnome-user
+            chmod 440 /etc/sudoers.d/debian-gnome-user
+            rm -f /etc/sudoers.d/debian-gnome-synaptic
+            visudo -cf /etc/sudoers.d/debian-gnome-user >/dev/null
         "
     else
         # Remove a rule left by an earlier regular-user configuration.
-        debian_run 'rm -f /etc/sudoers.d/debian-gnome-synaptic'
+        debian_run 'rm -f /etc/sudoers.d/debian-gnome-synaptic /etc/sudoers.d/debian-gnome-user'
     fi
 
     echo "  OK: Added Software (Synaptic) to the GNOME app launcher"
