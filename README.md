@@ -73,6 +73,9 @@ connection-test error if that service cannot respond.
 
 The launcher selects GTK's Cairo renderer for application windows, disables
 Mutter's experimental framebuffer scaling, and forces 1x X11 coordinates.
+It also supplies a generated `en_US.UTF-8` locale to GNOME and its D-Bus
+activated applications; GNOME Terminal will not start with the ASCII-only
+locale that an unconfigured PRoot environment can inherit.
 
 GNOME Shell uses Mesa's software compositor by default because the KGSL/EGL
 path can render the shell while producing invisible X11 application textures

@@ -276,7 +276,7 @@ step_desktop() {
     # Keep the install deliberately smaller than Debian's full `gnome` task.
     # GNOME session provides the Xorg session entries; gnome-shell is the shell.
     debian_apt_install \
-        "dbus-x11 dbus-user-session gnome-shell gnome-session gnome-session-xsession gnome-settings-daemon gnome-control-center gnome-terminal nautilus gnome-tweaks adwaita-icon-theme-full fonts-dejavu-core polkitd xdg-utils x11-xserver-utils" \
+        "dbus-x11 dbus-user-session locales gnome-shell gnome-session gnome-session-xsession gnome-settings-daemon gnome-control-center gnome-terminal nautilus gnome-tweaks adwaita-icon-theme-full fonts-dejavu-core polkitd xdg-utils x11-xserver-utils" \
         "GNOME desktop"
 
     # GNOME expects logind/systemd on a normal Debian machine. PRoot has neither.
@@ -290,6 +290,17 @@ step_desktop() {
             fi
         done
         mkdir -p /run/dbus
+
+        # Termux/PRoot may otherwise start Debian with the ASCII-only C locale.
+        # GNOME Terminal requires a UTF-8 locale and exits immediately without it.
+        sed -i "s/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/" /etc/locale.gen
+        locale-gen en_US.UTF-8 >/dev/null
+        update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+        cat > /etc/profile.d/10-debian-gnome-locale.sh <<"LOCALEEOF"
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
+LOCALEEOF
+        chmod 644 /etc/profile.d/10-debian-gnome-locale.sh
     '
 
     echo "  OK: Debian GNOME installed"
@@ -615,6 +626,8 @@ exec proot-distro login "$DISTRO" --shared-tmp \
     --env PULSE_SERVER="tcp:127.0.0.1" \
     --env DBUS_SYSTEM_BUS_ADDRESS="$SYSTEM_DBUS_ADDRESS" \
     --env GNOME_COMPOSITOR_RENDERER="$GNOME_COMPOSITOR_RENDERER" \
+    --env LANG="en_US.UTF-8" \
+    --env LC_ALL="en_US.UTF-8" \
     --env XDG_SESSION_TYPE="x11" \
     --env XDG_CURRENT_DESKTOP="GNOME" \
     --env XDG_SESSION_DESKTOP="gnome" \
@@ -623,6 +636,8 @@ exec proot-distro login "$DISTRO" --shared-tmp \
         export PULSE_SERVER=tcp:127.0.0.1
         export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/tmp/debian-gnome-system-bus
         export GNOME_COMPOSITOR_RENDERER="${GNOME_COMPOSITOR_RENDERER}"
+        export LANG=en_US.UTF-8
+        export LC_ALL=en_US.UTF-8
         export XDG_SESSION_TYPE=x11
         export XDG_CURRENT_DESKTOP=GNOME
         export XDG_SESSION_DESKTOP=gnome
@@ -717,6 +732,8 @@ exec proot-distro login "$DISTRO" --shared-tmp \
             export DISPLAY=:2
             export PULSE_SERVER=tcp:127.0.0.1
             export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/tmp/debian-gnome-system-bus
+            export LANG=en_US.UTF-8
+            export LC_ALL=en_US.UTF-8
             export XDG_RUNTIME_DIR=/tmp/runtime-${USER:-root}
             export XDG_SESSION_TYPE=x11
             export XDG_CURRENT_DESKTOP=GNOME
@@ -739,7 +756,7 @@ exec proot-distro login "$DISTRO" --shared-tmp \
             gsettings set org.gnome.desktop.interface scaling-factor 1 2>/dev/null || true
 
             dbus-update-activation-environment \
-                DISPLAY PULSE_SERVER DBUS_SYSTEM_BUS_ADDRESS \
+                DISPLAY PULSE_SERVER DBUS_SYSTEM_BUS_ADDRESS LANG LC_ALL \
                 XDG_RUNTIME_DIR XDG_SESSION_TYPE XDG_CURRENT_DESKTOP \
                 XDG_SESSION_DESKTOP GDK_BACKEND GSK_RENDERER GDK_SCALE \
                 GDK_DPI_SCALE QT_SCALE_FACTOR MOZ_ENABLE_WAYLAND \
