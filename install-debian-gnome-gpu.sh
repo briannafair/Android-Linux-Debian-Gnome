@@ -444,10 +444,10 @@ set -u
 DISTRO="debian-gnome"
 DISPLAY_NUM=":2"
 DEBIAN_USER="__DEBIAN_USER__"
-# Termux:X11 native mode exposed a framebuffer exactly twice the usable
-# Android viewport on the tested Samsung device. Override when needed, e.g.
-# TERMUX_X11_DISPLAY_SCALE=150 debian
-TERMUX_X11_DISPLAY_SCALE="${TERMUX_X11_DISPLAY_SCALE:-200}"
+# Mutter's KGSL/EGL path can render the shell but fail to composite X11 client
+# pixmaps when Termux:X11 has no DRI3 render node. Keep software as the stable
+# compositor default; "zink" and "kgsl" remain available for testing.
+GNOME_COMPOSITOR_RENDERER="${GNOME_COMPOSITOR_RENDERER:-software}"
 STATE_DIR="${TMPDIR}/debian-gnome"
 X11_PID_FILE="${STATE_DIR}/termux-x11.pid"
 X11_LOG="${STATE_DIR}/termux-x11.log"
@@ -501,20 +501,6 @@ pactl load-module module-native-protocol-tcp \
 export XDG_RUNTIME_DIR="${TMPDIR}"
 export DISPLAY="${DISPLAY_NUM}"
 termux-wake-lock 2>/dev/null || true
-
-# Configure the Android activity before connecting the X server. In scaled
-# mode Termux:X11 divides the activity dimensions by displayScale / 100, so
-# 200 converts the observed 2x physical-pixel framebuffer to logical pixels.
-am start --user 0 -n com.termux.x11/com.termux.x11.MainActivity >/dev/null 2>&1 || true
-sleep 0.5
-if command -v termux-x11-preference >/dev/null 2>&1 \
-    && command -v timeout >/dev/null 2>&1; then
-    if ! timeout 5 termux-x11-preference \
-        "displayResolutionMode"="scaled" \
-        "displayScale"="$TERMUX_X11_DISPLAY_SCALE" >/dev/null 2>&1; then
-        echo "WARNING: Could not set Termux:X11 scaled resolution automatically." >&2
-    fi
-fi
 
 echo "Starting Termux:X11..."
 : > "$X11_LOG"
@@ -574,6 +560,7 @@ exec proot-distro login "$DISTRO" --shared-tmp \
     --env DISPLAY="$DISPLAY_NUM" \
     --env PULSE_SERVER="tcp:127.0.0.1" \
     --env DBUS_SYSTEM_BUS_ADDRESS="$SYSTEM_DBUS_ADDRESS" \
+    --env GNOME_COMPOSITOR_RENDERER="$GNOME_COMPOSITOR_RENDERER" \
     --env XDG_SESSION_TYPE="x11" \
     --env XDG_CURRENT_DESKTOP="GNOME" \
     --env XDG_SESSION_DESKTOP="gnome" \
@@ -581,6 +568,7 @@ exec proot-distro login "$DISTRO" --shared-tmp \
         export DISPLAY=:2
         export PULSE_SERVER=tcp:127.0.0.1
         export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/tmp/debian-gnome-system-bus
+        export GNOME_COMPOSITOR_RENDERER="${GNOME_COMPOSITOR_RENDERER}"
         export XDG_SESSION_TYPE=x11
         export XDG_CURRENT_DESKTOP=GNOME
         export XDG_SESSION_DESKTOP=gnome
@@ -636,7 +624,7 @@ exec proot-distro login "$DISTRO" --shared-tmp \
 
         # Show the renderer before starting GNOME. This makes acceleration status obvious.
         echo ""
-        echo "GPU probe inside Debian:"
+        echo "GPU probe inside Debian (application environment):"
         if command -v vulkaninfo >/dev/null 2>&1; then
             vulkaninfo --summary 2>/dev/null | grep -E -m3 "deviceName|driverName|driverInfo" || true
         fi
@@ -649,6 +637,25 @@ exec proot-distro login "$DISTRO" --shared-tmp \
         export XDG_RUNTIME_DIR="/tmp/runtime-${USER:-root}"
         mkdir -p "$XDG_RUNTIME_DIR"
         chmod 700 "$XDG_RUNTIME_DIR"
+
+        case "$GNOME_COMPOSITOR_RENDERER" in
+            software)
+                mutter_command="env -u MESA_LOADER_DRIVER_OVERRIDE -u LIBGL_KOPPER_DRI2 LIBGL_ALWAYS_SOFTWARE=true GALLIUM_DRIVER=llvmpipe"
+                mutter_label="llvmpipe compatibility mode"
+                ;;
+            zink)
+                mutter_command="env MESA_LOADER_DRIVER_OVERRIDE=zink LIBGL_KOPPER_DRI2=true"
+                mutter_label="Zink/Turnip experimental mode"
+                ;;
+            kgsl)
+                mutter_command="env MESA_LOADER_DRIVER_OVERRIDE=kgsl"
+                mutter_label="Freedreno/KGSL experimental mode"
+                ;;
+            *)
+                echo "ERROR: GNOME_COMPOSITOR_RENDERER must be software, zink, or kgsl." >&2
+                exit 2
+                ;;
+        esac
 
         # GNOME 48 normally delegates session startup to systemd-logind, which
         # is unavailable in PRoot. Start Shell directly in a private session bus.
@@ -683,7 +690,11 @@ exec proot-distro login "$DISTRO" --shared-tmp \
                 XDG_SESSION_DESKTOP GDK_BACKEND GSK_RENDERER GDK_SCALE \
                 GDK_DPI_SCALE QT_SCALE_FACTOR MOZ_ENABLE_WAYLAND \
                 2>/dev/null || true
-            exec gnome-shell --x11
+
+            # mutter_command is inserted into this child command without being
+            # exported to the dbus-run-session application-activation bus.
+            echo GNOME-compositor-renderer: ${mutter_label}
+            exec ${mutter_command} gnome-shell --x11
         "
         gnome_status=$?
         exit "$gnome_status"

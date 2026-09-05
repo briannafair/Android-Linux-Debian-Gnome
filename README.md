@@ -64,18 +64,16 @@ not create another Debian installation. The launcher starts GNOME and its
 D-Bus compatibility service in one regular-user PRoot session and prints the
 connection-test error if that service cannot respond.
 
-The launcher uses GPU acceleration for GNOME Shell while selecting GTK's Cairo
-renderer for application windows. This avoids invisible GTK4 windows on
-Termux:X11 systems where Mesa-EGL cannot obtain a normal DRI3 render device.
-It also disables Mutter's experimental framebuffer scaling and forces 1x X11
-coordinates, preventing application windows from being placed outside the
-visible Android workspace.
+The launcher selects GTK's Cairo renderer for application windows, disables
+Mutter's experimental framebuffer scaling, and forces 1x X11 coordinates.
 
-On high-density Samsung displays the launcher configures Termux:X11 for
-`scaled` resolution at 200%, producing a logical-pixel framebuffer instead of
-the observed 2x native framebuffer. To select another scale for a different
-display, start the desktop with, for example:
+GNOME Shell uses Mesa's software compositor by default because the KGSL/EGL
+path can render the shell while producing invisible X11 application textures
+when Termux:X11 cannot supply a DRI3 render device. Applications activated over
+D-Bus retain the installed Adreno Mesa profile. Experimental compositor modes
+can be selected when launching:
 
 ```bash
-TERMUX_X11_DISPLAY_SCALE=150 debian
+GNOME_COMPOSITOR_RENDERER=zink debian
+GNOME_COMPOSITOR_RENDERER=kgsl debian
 ```
